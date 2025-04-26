@@ -4,6 +4,8 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { inAppWallet, preAuthenticate, authenticate, createWallet } from "thirdweb/wallets";
 import { createThirdwebClient, defineChain } from "thirdweb";
+import { debounce } from "lodash";
+import { CONTRACTS, SUPPORTED_CHAINS } from "../../utils/config";
 
 // Thirdweb client
 const thirdwebClient = createThirdwebClient({ clientId: "b81c12c8d9ae57479a26c52be1d198eb" });
@@ -13,7 +15,7 @@ const liskSepolia = defineChain({
   id: 4202,
   name: "Lisk Sepolia Testnet",
   nativeCurrency: { name: "Lisk Sepolia ETH", symbol: "ETH", decimals: 18 },
-  rpc: ["https://rpc.sepolia-api.lisk.com"],
+  rpc: ["https://rpc.sepolia-api.lisk.com", "https://sepolia.infura.io/v3/YOUR_INFURA_KEY"], // Fallback RPC
   blockExplorers: [{ name: "Lisk Explorer", url: "https://sepolia-blockscout.lisk.com" }],
 });
 
@@ -44,6 +46,7 @@ const Web3Context = createContext({
   disconnect: () => { throw new Error("disconnect not implemented"); },
   isConnecting: false,
   isInitialized: false,
+  supportsGasEstimation: false,
 });
 
 export function Web3Provider({ children }) {
@@ -55,21 +58,8 @@ export function Web3Provider({ children }) {
   const [balance, setBalance] = useState(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
-
-  const SUPPORTED_CHAINS = {
-    4202: {
-      chainName: "Lisk Sepolia Testnet",
-      nativeCurrency: { name: "Lisk Sepolia ETH", symbol: "ETH", decimals: 18 },
-      rpcUrls: ["https://rpc.sepolia-api.lisk.com"],
-      blockExplorerUrls: ["https://sepolia-blockscout.lisk.com"],
-    },
-    44787: {
-      chainName: "Celo Alfajores Testnet",
-      nativeCurrency: { name: "Celo", symbol: "CELO", decimals: 18 },
-      rpcUrls: ["https://alfajores-forno.celo-testnet.org"],
-      blockExplorerUrls: ["https://alfajores-blockscout.celo-testnet.org"],
-    },
-  };
+  const [lastBlockNumber, setLastBlockNumber] = useState(null);
+  const [connectionError, setConnectionError] = useState(null);
 
   // Retry logic for network requests
   async function withRetry(fn, maxRetries = 3, delay = 1000) {
@@ -86,22 +76,26 @@ export function Web3Provider({ children }) {
     }
   }
 
-  // Fetch wallet balance
-  async function fetchBalance(accountAddress, providerInstance) {
+  // Debounced balance fetching
+  const debouncedFetchBalance = debounce(async (accountAddress, providerInstance, chainId) => {
     if (!accountAddress || !providerInstance) {
       setBalance(null);
       return;
     }
     try {
-      const balanceWei = await providerInstance.getBalance(accountAddress);
-      const balanceEther = ethers.formatEther(balanceWei);
-      const symbol = chainId === 44787 ? "CELO" : "ETH";
-      setBalance(`${parseFloat(balanceEther).toFixed(4)} ${symbol}`);
+      const currentBlock = await providerInstance.getBlockNumber();
+      if (currentBlock !== lastBlockNumber) {
+        const balanceWei = await providerInstance.getBalance(accountAddress);
+        const balanceEther = ethers.formatEther(balanceWei);
+        const symbol = chainId === 44787 ? "CELO" : "ETH";
+        setBalance(`${parseFloat(balanceEther).toFixed(4)} ${symbol}`);
+        setLastBlockNumber(currentBlock);
+      }
     } catch (error) {
       console.error("Error fetching balance:", error.message);
       setBalance("Error fetching balance");
     }
-  }
+  }, 1000);
 
   // Initialize inAppWallet
   const wallet = inAppWallet({
@@ -145,10 +139,16 @@ export function Web3Provider({ children }) {
       setAccount(walletAccount.address);
       setChainId(Number(thirdwebChain.id));
       setWalletType("smart");
-      await fetchBalance(walletAccount.address, jsonRpcProvider);
+      await debouncedFetchBalance(walletAccount.address, jsonRpcProvider, Number(thirdwebChain.id));
     } catch (error) {
+      const message = error.message.includes("pop-up")
+        ? "Please allow popups for this site and try again."
+        : error.message.includes("Failed to fetch")
+        ? "Network error. Please check your internet connection."
+        : error.message;
       console.error(`Error connecting with ${strategy}:`, error.message, error.stack);
-      throw error;
+      setConnectionError(message);
+      throw new Error(message);
     }
   }
 
@@ -180,10 +180,16 @@ export function Web3Provider({ children }) {
       setAccount(walletAccount.address);
       setChainId(Number(thirdwebChain.id));
       setWalletType("smart");
-      await fetchBalance(walletAccount.address, jsonRpcProvider);
+      await debouncedFetchBalance(walletAccount.address, jsonRpcProvider, Number(thirdwebChain.id));
     } catch (error) {
+      const message = error.message.includes("pop-up")
+        ? "Please allow popups for this site and try again."
+        : error.message.includes("Failed to fetch")
+        ? "Network error. Please check your internet connection."
+        : error.message;
       console.error("Error connecting with email:", error.message, error.stack);
-      throw error;
+      setConnectionError(message);
+      throw new Error(message);
     }
   }
 
@@ -215,10 +221,16 @@ export function Web3Provider({ children }) {
       setAccount(walletAccount.address);
       setChainId(Number(thirdwebChain.id));
       setWalletType("smart");
-      await fetchBalance(walletAccount.address, jsonRpcProvider);
+      await debouncedFetchBalance(walletAccount.address, jsonRpcProvider, Number(thirdwebChain.id));
     } catch (error) {
+      const message = error.message.includes("pop-up")
+        ? "Please allow popups for this site and try again."
+        : error.message.includes("Failed to fetch")
+        ? "Network error. Please check your internet connection."
+        : error.message;
       console.error("Error connecting with phone:", error.message, error.stack);
-      throw error;
+      setConnectionError(message);
+      throw new Error(message);
     }
   }
 
@@ -250,10 +262,16 @@ export function Web3Provider({ children }) {
       setAccount(walletAccount.address);
       setChainId(Number(thirdwebChain.id));
       setWalletType("smart");
-      await fetchBalance(walletAccount.address, jsonRpcProvider);
+      await debouncedFetchBalance(walletAccount.address, jsonRpcProvider, Number(thirdwebChain.id));
     } catch (error) {
+      const message = error.message.includes("pop-up")
+        ? "Please allow popups for this site and try again."
+        : error.message.includes("Failed to fetch")
+        ? "Network error. Please check your internet connection."
+        : error.message;
       console.error("Error connecting with passkey:", error.message, error.stack);
-      throw error;
+      setConnectionError(message);
+      throw new Error(message);
     }
   }
 
@@ -273,10 +291,16 @@ export function Web3Provider({ children }) {
       setAccount(walletAccount.address);
       setChainId(Number(thirdwebChain.id));
       setWalletType("smart");
-      await fetchBalance(walletAccount.address, jsonRpcProvider);
+      await debouncedFetchBalance(walletAccount.address, jsonRpcProvider, Number(thirdwebChain.id));
     } catch (error) {
+      const message = error.message.includes("pop-up")
+        ? "Please allow popups for this site and try again."
+        : error.message.includes("Failed to fetch")
+        ? "Network error. Please check your internet connection."
+        : error.message;
       console.error("Error connecting as guest:", error.message, error.stack);
-      throw error;
+      setConnectionError(message);
+      throw new Error(message);
     }
   }
 
@@ -298,16 +322,23 @@ export function Web3Provider({ children }) {
       setAccount(walletAccount.address);
       setChainId(Number(thirdwebChain.id));
       setWalletType("smart");
-      await fetchBalance(walletAccount.address, jsonRpcProvider);
+      await debouncedFetchBalance(walletAccount.address, jsonRpcProvider, Number(thirdwebChain.id));
     } catch (error) {
+      const message = error.message.includes("pop-up")
+        ? "Please allow popups for this site and try again."
+        : error.message.includes("Failed to fetch")
+        ? "Network error. Please check your internet connection."
+        : error.message;
       console.error("Error connecting with SIWE:", error.message, error.stack);
-      throw error;
+      setConnectionError(message);
+      throw new Error(message);
     }
   }
 
   // Unified connectInAppWallet function
   async function connectInAppWallet(strategy, options = {}) {
     setIsConnecting(true);
+    setConnectionError(null);
     try {
       switch (strategy) {
         case "google":
@@ -330,8 +361,7 @@ export function Web3Provider({ children }) {
           throw new Error(`Unsupported strategy: ${strategy}`);
       }
     } catch (error) {
-      console.error(`Error in connectInAppWallet (${strategy}):`, error.message, error.stack);
-      throw error;
+      throw error; // Error is handled in the specific connect function
     } finally {
       setIsConnecting(false);
     }
@@ -340,10 +370,12 @@ export function Web3Provider({ children }) {
   // MetaMask connect function
   async function connect() {
     if (typeof window === "undefined" || !window.ethereum) {
+      setConnectionError("Please install MetaMask to use this app");
       throw new Error("Please install MetaMask to use this app");
     }
 
     setIsConnecting(true);
+    setConnectionError(null);
     try {
       const browserProvider = new ethers.BrowserProvider(window.ethereum);
       const network = await browserProvider.getNetwork();
@@ -356,6 +388,7 @@ export function Web3Provider({ children }) {
             method: "wallet_switchEthereumChain",
             params: [{ chainId: `0x${defaultChainId.toString(16)}` }],
           });
+          setChainId(defaultChainId);
         } catch (switchError) {
           if (switchError.code === 4902) {
             await window.ethereum.request({
@@ -367,12 +400,12 @@ export function Web3Provider({ children }) {
                 },
               ],
             });
+            setChainId(defaultChainId);
           } else {
-            throw switchError;
+            setConnectionError("Please switch to a supported network (Lisk Sepolia or Celo Alfajores)");
+            throw new Error("Please switch to a supported network (Lisk Sepolia or Celo Alfajores)");
           }
         }
-        const updatedNetwork = await browserProvider.getNetwork();
-        setChainId(Number(updatedNetwork.chainId));
       } else {
         setChainId(currentChainId);
       }
@@ -384,9 +417,10 @@ export function Web3Provider({ children }) {
       setSigner(userSigner);
       setAccount(accounts[0]);
       setWalletType("eoa");
-      await fetchBalance(accounts[0], browserProvider);
+      await debouncedFetchBalance(accounts[0], browserProvider, currentChainId);
     } catch (error) {
       console.error("Error connecting to wallet:", error);
+      setConnectionError(error.message);
       throw error;
     } finally {
       setIsConnecting(false);
@@ -401,6 +435,7 @@ export function Web3Provider({ children }) {
     setChainId(null);
     setWalletType(null);
     setBalance(null);
+    setConnectionError(null);
     wallet.disconnect();
   }
 
@@ -433,11 +468,8 @@ export function Web3Provider({ children }) {
 
   // Effect to refetch balance on account or chainId change
   useEffect(() => {
-    if (account && provider) {
-      fetchBalance(account, provider);
-    } else {
-      setBalance(null);
-    }
+    debouncedFetchBalance(account, provider, chainId);
+    return () => debouncedFetchBalance.cancel();
   }, [account, chainId, provider]);
 
   // Set initialized after component mounts
