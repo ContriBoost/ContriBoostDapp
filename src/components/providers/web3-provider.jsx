@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 import { inAppWallet, preAuthenticate, authenticate, createWallet } from "thirdweb/wallets";
 import { createThirdwebClient, defineChain } from "thirdweb";
 import { debounce } from "lodash";
+import { toast } from "react-toastify";
 import { CONTRACTS, SUPPORTED_CHAINS } from "../../utils/config";
 
 // Thirdweb client
@@ -21,7 +22,7 @@ const liskSepolia = defineChain({
 
 const celoAlfajores = defineChain({
   id: 44787,
-  name: "Celo Alfajores Testnet",
+  name: "Celo Alfajores Testપીએફnet",
   nativeCurrency: { name: "Celo", symbol: "CELO", decimals: 18 },
   rpc: ["https://alfajores-forno.celo-testnet.org"],
   blockExplorers: [{ name: "Celo Explorer", url: "https://alfajores-blockscout.celo-testnet.org" }],
@@ -47,6 +48,7 @@ const Web3Context = createContext({
   isConnecting: false,
   isInitialized: false,
   supportsGasEstimation: false,
+  switchNetwork: async () => { throw new Error("switchNetwork not implemented"); },
 });
 
 export function Web3Provider({ children }) {
@@ -60,6 +62,18 @@ export function Web3Provider({ children }) {
   const [isInitialized, setIsInitialized] = useState(false);
   const [lastBlockNumber, setLastBlockNumber] = useState(null);
   const [connectionError, setConnectionError] = useState(null);
+
+  // Map chain IDs to Thirdweb chain configurations
+  const chainConfigs = {
+    4202: liskSepolia,
+    44787: celoAlfajores,
+  };
+
+  // Map chain IDs to ethers provider RPC URLs
+  const rpcUrls = {
+    4202: "https://rpc.sepolia-api.lisk.com",
+    44787: "https://alfajores-forno.celo-testnet.org",
+  };
 
   // Retry logic for network requests
   async function withRetry(fn, maxRetries = 3, delay = 1000) {
@@ -418,9 +432,93 @@ export function Web3Provider({ children }) {
       setAccount(accounts[0]);
       setWalletType("eoa");
       await debouncedFetchBalance(accounts[0], browserProvider, currentChainId);
+      toast.success("Connected to MetaMask");
     } catch (error) {
       console.error("Error connecting to wallet:", error);
       setConnectionError(error.message);
+      throw error;
+    } finally {
+      setIsConnecting(false);
+    }
+  }
+
+  // Switch network function
+  async function switchNetwork(targetChainId) {
+    if (!SUPPORTED_CHAINS[targetChainId]) {
+      throw new Error(`Unsupported chain ID: ${targetChainId}`);
+    }
+
+    setIsConnecting(true);
+    setConnectionError(null);
+
+    try {
+      if (walletType === "eoa" && typeof window !== "undefined" && window.ethereum) {
+        // MetaMask: Switch or add chain
+        try {
+          await window.ethereum.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: `0x${targetChainId.toString(16)}` }],
+          });
+        } catch (switchError) {
+          if (switchError.code === 4902) {
+            // Chain not added, add it
+            await window.ethereum.request({
+              method: "wallet_addEthereumChain",
+              params: [
+                {
+                  chainId: `0x${targetChainId.toString(16)}`,
+                  chainName: SUPPORTED_CHAINS[targetChainId].chainName,
+                  nativeCurrency: SUPPORTED_CHAINS[targetChainId].nativeCurrency,
+                  rpcUrls: SUPPORTED_CHAINS[targetChainId].rpcUrls,
+                  blockExplorerUrls: SUPPORTED_CHAINS[targetChainId].blockExplorerUrls,
+                },
+              ],
+            });
+          } else {
+            throw new Error("Failed to switch network. Please try again.");
+          }
+        }
+
+        // Update provider and signer after switching
+        const browserProvider = new ethers.BrowserProvider(window.ethereum);
+        const userSigner = await browserProvider.getSigner();
+        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+
+        setProvider(browserProvider);
+        setSigner(userSigner);
+        setAccount(accounts[0]);
+        setChainId(targetChainId);
+        await debouncedFetchBalance(accounts[0], browserProvider, targetChainId);
+        toast.success(`Switched to ${SUPPORTED_CHAINS[targetChainId].chainName}`);
+      } else if (walletType === "smart") {
+        // inAppWallet: Update chain configuration
+        const targetChain = chainConfigs[targetChainId];
+        if (!targetChain) {
+          throw new Error(`No chain configuration found for chain ID: ${targetChainId}`);
+        }
+
+        // Reconnect wallet with new chain
+        const walletAccount = await wallet.connect({
+          client: thirdwebClient,
+          chain: targetChain,
+          strategy: "wallet", // Re-use existing wallet connection
+        });
+
+        // Update provider and signer
+        const jsonRpcProvider = new ethers.JsonRpcProvider(rpcUrls[targetChainId]);
+        setProvider(jsonRpcProvider);
+        setSigner(walletAccount);
+        setAccount(walletAccount.address);
+        setChainId(targetChainId);
+        await debouncedFetchBalance(walletAccount.address, jsonRpcProvider, targetChainId);
+        toast.success(`Switched to ${SUPPORTED_CHAINS[targetChainId].chainName}`);
+      } else {
+        throw new Error("No wallet connected. Please connect a wallet first.");
+      }
+    } catch (error) {
+      console.error("Error switching network:", error);
+      setConnectionError(error.message);
+      toast.error(`Failed to switch network: ${error.message}`);
       throw error;
     } finally {
       setIsConnecting(false);
@@ -437,6 +535,7 @@ export function Web3Provider({ children }) {
     setBalance(null);
     setConnectionError(null);
     wallet.disconnect();
+    toast.info("Disconnected from wallet");
   }
 
   // Effect for MetaMask account and chain changes
@@ -489,6 +588,7 @@ export function Web3Provider({ children }) {
       connect: !!connect,
       connectInAppWallet: !!connectInAppWallet,
       disconnect: !!disconnect,
+      switchNetwork: !!switchNetwork,
       isConnecting,
       isInitialized,
     });
@@ -513,6 +613,7 @@ export function Web3Provider({ children }) {
         disconnect,
         isConnecting,
         isInitialized,
+        switchNetwork,
       }}
     >
       {children}

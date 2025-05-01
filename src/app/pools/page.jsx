@@ -80,8 +80,6 @@ export default function PoolsPage() {
 
   useEffect(() => {
     fetchPools();
-    const interval = setInterval(fetchPools, 30000); // Poll every 30s
-    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -344,9 +342,10 @@ export default function PoolsPage() {
     if (chainId !== poolChainId) {
       try {
         await switchNetwork(poolChainId);
+        toast.success(`Switched to ${NETWORKS[poolChainId === NETWORKS.lisk.chainId ? "lisk" : "celo"].name}`);
         return true;
       } catch (error) {
-        toast.error(`Please switch to ${poolChainId === NETWORKS.lisk.chainId ? "Lisk Sepolia" : "Celo Alfajores"} in your wallet`);
+        toast.error(`Failed to switch to ${NETWORKS[poolChainId === NETWORKS.lisk.chainId ? "lisk" : "celo"].name}: ${error.message}`);
         return false;
       }
     }
