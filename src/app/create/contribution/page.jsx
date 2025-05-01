@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ethers } from "ethers";
 import { useWeb3 } from "@/components/providers/web3-provider";
@@ -19,8 +19,23 @@ import { Loader2, Info, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "react-toastify";
 
-const FACTORY_ADDRESS = "0xaE83198F4c622a5dccdda1B494fF811f5B6F3631";
-const USDT_ADDRESS = "0x2728DD8B45B788e26d12B13Db5A244e5403e7eda";
+// Contract addresses
+const CONTRACT_ADDRESSES = {
+  lisk: {
+    factory: "0xaE83198F4c622a5dccdda1B494fF811f5B6F3631", // Placeholder; replace with Lisk Sepolia factory address
+    usdt: "0x2728DD8B45B788e26d12B13Db5A244e5403e7eda", // Placeholder; replace with Lisk Sepolia stablecoin address
+  },
+  celo: {
+    factory: "0x2cF3869e0522ebEa4161ff601d5711A7Af13ebA3", // Celo Alfajores Contriboost factory
+    cusd: "0x874069Fa1Eb16D44d622BC6Cf1632c057f6F7f2d", // cUSD for Alfajores
+  },
+};
+
+// Supported chain IDs
+const SUPPORTED_CHAINS = {
+  lisk: 4202, // Lisk Sepolia
+  celo: 44787, // Celo Alfajores
+};
 
 const formSchema = z.object({
   name: z.string().min(3, { message: "Name must be at least 3 characters" }),
@@ -51,9 +66,10 @@ const formSchema = z.object({
 
 export default function CreateContriboostPage() {
   const router = useRouter();
-  const { signer, account, connect, supportsGasEstimation } = useWeb3();
+  const { signer, account, connect, supportsGasEstimation, chainId, switchNetwork } = useWeb3();
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState(null);
+  const [selectedNetwork, setSelectedNetwork] = useState(null);
 
   const form = useForm({
     resolver: zodResolver(formSchema),
@@ -70,8 +86,37 @@ export default function CreateContriboostPage() {
     },
   });
 
+  // Detect and validate network
+  useEffect(() => {
+    if (chainId) {
+      if (chainId === SUPPORTED_CHAINS.lisk) {
+        setSelectedNetwork("lisk");
+      } else if (chainId === SUPPORTED_CHAINS.celo) {
+        setSelectedNetwork("celo");
+      } else {
+        setError("Unsupported network. Please switch to Lisk Sepolia or Celo Alfajores.");
+        setSelectedNetwork(null);
+      }
+    } else {
+      setSelectedNetwork(null);
+    }
+  }, [chainId]);
+
+  // Switch network if needed
+  const handleNetworkSwitch = async (network) => {
+    try {
+      const targetChainId = SUPPORTED_CHAINS[network];
+      await switchNetwork(targetChainId);
+      setError(null);
+      toast.info(`Switched to ${network === "lisk" ? "Lisk Sepolia" : "Celo Alfajores"} network`);
+    } catch (err) {
+      setError("Failed to switch network. Please switch manually in your wallet.");
+      toast.error("Failed to switch network");
+    }
+  };
+
   async function onSubmit(values) {
-    if (!signer || !account) {
+    if (!account) {
       await connect();
       if (!account) {
         setError("Please connect your wallet first");
@@ -80,11 +125,23 @@ export default function CreateContriboostPage() {
       }
     }
 
+    if (!selectedNetwork) {
+      setError("Please select a supported network (Lisk Sepolia or Celo Alfajores)");
+      toast.error("Unsupported network");
+      return;
+    }
+
     setError(null);
     setIsCreating(true);
 
     try {
-      const factoryContract = new ethers.Contract(FACTORY_ADDRESS, ContriboostFactoryAbi, signer);
+      const factoryAddress = CONTRACT_ADDRESSES[selectedNetwork].factory;
+      const tokenAddress =
+        values.paymentMethod === "1"
+          ? CONTRACT_ADDRESSES[selectedNetwork][selectedNetwork === "lisk" ? "usdt" : "cusd"]
+          : ethers.ZeroAddress;
+
+      const factoryContract = new ethers.Contract(factoryAddress, ContriboostFactoryAbi, signer);
       const config = {
         dayRange: values.dayRange,
         expectedNumber: values.expectedNumber,
@@ -96,13 +153,10 @@ export default function CreateContriboostPage() {
         paymentMethod: Number(values.paymentMethod),
       };
 
-      const tokenAddress = values.paymentMethod === "1" ? USDT_ADDRESS : ethers.ZeroAddress;
-
       console.log("Creating Contriboost with config:", config, "Token address:", tokenAddress);
 
       let tx;
       if (supportsGasEstimation) {
-        // For EOA wallets (e.g., MetaMask), estimate gas
         const estimatedGas = await factoryContract.createContriboost.estimateGas(
           config,
           values.name,
@@ -118,7 +172,6 @@ export default function CreateContriboostPage() {
           { gasLimit }
         );
       } else {
-        // For smart wallets, skip gas estimation
         tx = await factoryContract.createContriboost(
           config,
           values.name,
@@ -130,7 +183,6 @@ export default function CreateContriboostPage() {
       console.log("Transaction sent:", tx.hash);
       const receipt = await tx.wait();
       console.log("Transaction confirmed:", receipt);
-      console.log("Receipt logs:", receipt.logs);
 
       const contriboostCreatedEvent = receipt.logs.find(
         (log) => {
@@ -148,7 +200,6 @@ export default function CreateContriboostPage() {
       }
 
       const parsedLog = factoryContract.interface.parseLog(contriboostCreatedEvent);
-      console.log("Parsed ContriboostCreated event:", parsedLog);
       const newContractAddress = parsedLog.args.contriboostAddress;
 
       if (!ethers.isAddress(newContractAddress)) {
@@ -201,197 +252,223 @@ export default function CreateContriboostPage() {
       <h1 className="text-3xl font-bold mb-2">Create Contriboost Pool</h1>
       <p className="text-muted-foreground mb-8">Deploy a new rotating savings pool for your community</p>
 
-      {error && (
-        <Alert variant="destructive" className="mb-6">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-
-      <Card>
+      <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Pool Details</CardTitle>
-          <CardDescription>Configure your new Contriboost rotating savings pool</CardDescription>
+          <CardTitle>Select Network</CardTitle>
+          <CardDescription>Choose the blockchain network for your pool</CardDescription>
         </CardHeader>
         <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Pool Name</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Friends Savings Pool" {...field} />
-                    </FormControl>
-                    <FormDescription>A descriptive name for your Contriboost pool</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="description"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Description</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="Weekly savings pool for our friend group" {...field} />
-                    </FormControl>
-                    <FormDescription>Explain the purpose of this pool to potential participants</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <FormField
-                  control={form.control}
-                  name="dayRange"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Days Per Cycle</FormLabel>
-                      <FormControl>
-                        <Input type="number" min="1" {...field} />
-                      </FormControl>
-                      <FormDescription>Number of days in each distribution cycle</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="expectedNumber"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Expected Participants</FormLabel>
-                      <FormControl>
-                        <Input type="number" min="2" {...field} />
-                      </FormControl>
-                      <FormDescription>Maximum number of participants in the pool</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <FormField
-                  control={form.control}
-                  name="contributionAmount"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contribution Amount</FormLabel>
-                      <FormControl>
-                        <Input placeholder="0.1" {...field} />
-                      </FormControl>
-                      <FormDescription>
-                        Amount each participant contributes per cycle (in ETH or USDT)
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="paymentMethod"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Payment Method</FormLabel>
-                      <FormControl>
-                        <RadioGroup
-                          onValueChange={field.onChange}
-                          defaultValue={field.value}
-                          className="flex flex-col space-y-1"
-                        >
-                          <FormItem className="flex items-center space-x-3 space-y-0">
-                            <FormControl>
-                              <RadioGroupItem value="0" />
-                            </FormControl>
-                            <FormLabel className="font-normal">Ether (ETH)</FormLabel>
-                          </FormItem>
-                          <FormItem className="flex items-center space-x-3 space-y-0">
-                            <FormControl>
-                              <RadioGroupItem value="1" />
-                            </FormControl>
-                            <FormLabel className="font-normal">USDT</FormLabel>
-                          </FormItem>
-                        </RadioGroup>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <FormField
-                  control={form.control}
-                  name="hostFeePercentage"
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className="flex items-center gap-2">
-                        <FormLabel>Host Fee Percentage</FormLabel>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Info className="h-4 w-4 text-muted-foreground" />
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p className="w-[200px] text-xs">
-                                The percentage fee you receive as the host of this pool. Max 5%.
-                              </p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <FormControl>
-                        <Input type="number" min="0" max="5" step="0.1" {...field} />
-                      </FormControl>
-                      <FormDescription>Your fee for hosting (0-5%)</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="maxMissedDeposits"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Max Missed Deposits</FormLabel>
-                      <FormControl>
-                        <Input type="number" min="0" {...field} />
-                      </FormControl>
-                      <FormDescription>
-                        How many deposits a participant can miss before becoming inactive
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={form.control}
-                name="startTimestamp"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Start Date</FormLabel>
-                    <FormControl>
-                      <Input type="date" {...field} />
-                    </FormControl>
-                    <FormDescription>When the first cycle will begin</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <CardFooter className="flex justify-end px-0">
-                <Button variant="outline" type="submit" disabled={isCreating}>
-                  {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Create Pool
-                </Button>
-              </CardFooter>
-            </form>
-          </Form>
+          <div className="flex gap-4">
+            <Button
+              variant={selectedNetwork === "lisk" ? "default" : "outline"}
+              onClick={() => handleNetworkSwitch("lisk")}
+              disabled={isCreating || chainId === SUPPORTED_CHAINS.lisk}
+            >
+              Lisk Sepolia
+            </Button>
+            <Button
+              variant={selectedNetwork === "celo" ? "default" : "outline"}
+              onClick={() => handleNetworkSwitch("celo")}
+              disabled={isCreating || chainId === SUPPORTED_CHAINS.celo}
+            >
+              Celo Alfajores
+            </Button>
+          </div>
+          {error && !selectedNetwork && (
+            <Alert variant="destructive" className="mt-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
         </CardContent>
       </Card>
+
+      {selectedNetwork && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Pool Details</CardTitle>
+            <CardDescription>Configure your new Contriboost rotating savings pool</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Pool Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Friends Savings Pool" {...field} />
+                      </FormControl>
+                      <FormDescription>A descriptive name for your Contriboost pool</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description</FormLabel>
+                      <FormControl>
+                        <Textarea placeholder="Weekly savings pool for our friend group" {...field} />
+                      </FormControl>
+                      <FormDescription>Explain the purpose of this pool to potential participants</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={form.control}
+                    name="dayRange"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Days Per Cycle</FormLabel>
+                        <FormControl>
+                          <Input type="number" min="1" {...field} />
+                        </FormControl>
+                        <FormDescription>Number of days in each distribution cycle</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="expectedNumber"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Expected Participants</FormLabel>
+                        <FormControl>
+                          <Input type="number" min="2" {...field} />
+                        </FormControl>
+                        <FormDescription>Maximum number of participants in the pool</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={form.control}
+                    name="contributionAmount"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Contribution Amount</FormLabel>
+                        <FormControl>
+                          <Input placeholder="0.1" {...field} />
+                        </FormControl>
+                        <FormDescription>
+                          Amount each participant contributes per cycle (in {selectedNetwork === "lisk" ? "ETH or USDT" : "CELO or cUSD"})
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="paymentMethod"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Payment Method</FormLabel>
+                        <FormControl>
+                          <RadioGroup
+                            onValueChange={field.onChange}
+                            defaultValue={field.value}
+                            className="flex flex-col space-y-1"
+                          >
+                            <FormItem className="flex items-center space-x-3 space-y-0">
+                              <FormControl>
+                                <RadioGroupItem value="0" />
+                              </FormControl>
+                              <FormLabel className="font-normal">{selectedNetwork === "lisk" ? "Ether (ETH)" : "CELO"}</FormLabel>
+                            </FormItem>
+                            <FormItem className="flex items-center space-x-3 space-y-0">
+                              <FormControl>
+                                <RadioGroupItem value="1" />
+                              </FormControl>
+                              <FormLabel className="font-normal">{selectedNetwork === "lisk" ? "USDT" : "cUSD"}</FormLabel>
+                            </FormItem>
+                          </RadioGroup>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <FormField
+                    control={form.control}
+                    name="hostFeePercentage"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="flex items-center gap-2">
+                          <FormLabel>Host Fee Percentage</FormLabel>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Info className="h-4 w-4 text-muted-foreground" />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p className="w-[200px] text-xs">
+                                  The percentage fee you receive as the host of this pool. Max 5%.
+                                </p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                        <FormControl>
+                          <Input type="number" min="0" max="5" step="0.1" {...field} />
+                        </FormControl>
+                        <FormDescription>Your fee for hosting (0-5%)</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="maxMissedDeposits"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Max Missed Deposits</FormLabel>
+                        <FormControl>
+                          <Input type="number" min="0" {...field} />
+                        </FormControl>
+                        <FormDescription>
+                          How many deposits a participant can miss before becoming inactive
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="startTimestamp"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Start Date</FormLabel>
+                      <FormControl>
+                        <Input type="date" {...field} />
+                      </FormControl>
+                      <FormDescription>When the first cycle will begin</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <CardFooter className="flex justify-end px-0">
+                  <Button variant="outline" type="submit" disabled={isCreating || !selectedNetwork}>
+                    {isCreating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Create Pool
+                  </Button>
+                </CardFooter>
+              </form>
+            </Form>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
