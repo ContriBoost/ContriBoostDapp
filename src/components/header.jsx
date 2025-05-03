@@ -69,7 +69,6 @@ export default function Header() {
       if (connectorId === "metamask") {
         await connect();
         setIsConnectDialogOpen(false);
-        toast.success("Connected with MetaMask!");
       } else {
         if (connectorId === "phone") {
           const error = validatePhoneNumber(options.phoneNumber);
