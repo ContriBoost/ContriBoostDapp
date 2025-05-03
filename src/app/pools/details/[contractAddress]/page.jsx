@@ -301,9 +301,10 @@ export default function PoolDetailsPage() {
     try {
       const contract = new ethers.Contract(contractAddress, ContriboostAbi, signer);
       const tx = await contract.join({ gasLimit: 200000 });
+      console.log("Join Contriboost tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Successfully joined the Contriboost pool!");
+      toast.success(`Successfully joined the Contriboost pool! Tx: ${tx.hash}`);
     } catch (error) {
       console.error("Error joining Contriboost:", error);
       let message = error.reason || error.message || "Failed to join";
@@ -366,14 +367,16 @@ export default function PoolDetailsPage() {
           const approveTx = await tokenContract.approve(contractAddress, amount, {
             gasLimit: 100000,
           });
+          console.log("Approve tx hash:", approveTx.hash);
           await approveTx.wait();
         }
         tx = await contract.deposit({ gasLimit: 300000 });
       }
 
+      console.log("Deposit Contriboost tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Deposit successful!");
+      toast.success(`Deposit successful! Tx: ${tx.hash}`);
       setDepositAmount("");
     } catch (error) {
       console.error("Error depositing to Contriboost:", error);
@@ -399,9 +402,10 @@ export default function PoolDetailsPage() {
     try {
       const contract = new ethers.Contract(contractAddress, ContriboostAbi, signer);
       const tx = await contract.checkMissedDeposits({ gasLimit: 200000 });
+      console.log("Check missed deposits tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Missed deposits checked successfully!");
+      toast.success(`Missed deposits checked successfully! Tx: ${tx.hash}`);
     } catch (error) {
       console.error("Error checking missed deposits:", error);
       let message = error.reason || error.message || "Failed to check missed deposits";
@@ -414,7 +418,7 @@ export default function PoolDetailsPage() {
   async function emergencyWithdraw(tokenAddress) {
     if (!(await ensureCorrectNetwork())) return;
     if (!userStatus?.isHost && !userStatus?.isOwner) {
-      toast.warning("Only the host or owner can perform emergency withdrawal");
+      toast.warning("Only the host or owner nationalists can perform emergency withdrawal");
       return;
     }
     setIsProcessing(true);
@@ -427,9 +431,10 @@ export default function PoolDetailsPage() {
       const tx = poolType === "Contriboost"
         ? await contract.emergencyWithdraw(tokenAddress || ethers.ZeroAddress, { gasLimit: 300000 })
         : await contract.emergencyWithdraw({ gasLimit: 300000 });
+      console.log("Emergency withdraw tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Emergency withdrawal successful!");
+      toast.success(`Emergency withdrawal successful! Tx: ${tx.hash}`);
     } catch (error) {
       console.error("Error performing emergency withdrawal:", error);
       let message = error.reason || error.message || "Failed to perform emergency withdrawal";
@@ -453,9 +458,10 @@ export default function PoolDetailsPage() {
     try {
       const contract = new ethers.Contract(contractAddress, ContriboostAbi, signer);
       const tx = await contract.setDescription(newDescription, { gasLimit: 200000 });
+      console.log("Set description tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Description updated successfully!");
+      toast.success(`Description updated successfully! Tx: ${tx.hash}`);
       setNewDescription("");
     } catch (error) {
       console.error("Error setting description:", error);
@@ -483,9 +489,10 @@ export default function PoolDetailsPage() {
         Math.floor(Number(newHostFee) * 100),
         { gasLimit: 200000 }
       );
+      console.log("Set host fee tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Host fee updated successfully!");
+      toast.success(`Host fee updated successfully! Tx: ${tx.hash}`);
       setNewHostFee("");
     } catch (error) {
       console.error("Error setting host fee:", error);
@@ -510,9 +517,10 @@ export default function PoolDetailsPage() {
     try {
       const contract = new ethers.Contract(contractAddress, ContriboostAbi, signer);
       const tx = await contract.setTokenAddress(newTokenAddress, { gasLimit: 200000 });
+      console.log("Set token address tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Token address updated successfully!");
+      toast.success(`Token address updated successfully! Tx: ${tx.hash}`);
       setNewTokenAddress("");
     } catch (error) {
       console.error("Error setting token address:", error);
@@ -537,9 +545,10 @@ export default function PoolDetailsPage() {
         poolDetails.tokenAddress === ethers.ZeroAddress
           ? await contract.reactivateParticipant(participantAddress, { value: amount, gasLimit: 300000 })
           : await contract.reactivateParticipant(participantAddress, { gasLimit: 300000 });
+      console.log("Reactivate participant tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success(`Successfully reactivated participant ${formatAddress(participantAddress)}!`);
+      toast.success(`Successfully reactivated participant ${formatAddress(participantAddress)}! Tx: ${tx.hash}`);
     } catch (error) {
       console.error("Error reactivating in Contriboost:", error);
       let message = error.reason || error.message || "Failed to reactivate";
@@ -562,9 +571,10 @@ export default function PoolDetailsPage() {
     try {
       const contract = new ethers.Contract(contractAddress, ContriboostAbi, signer);
       const tx = await contract.distributeFunds({ gasLimit: 500000 });
+      console.log("Distribute funds tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Funds distributed successfully!");
+      toast.success(`Funds distributed successfully! Tx: ${tx.hash}`);
     } catch (error) {
       console.error("Error distributing funds:", error);
       let message = error.reason || error.message || "Failed to distribute funds";
@@ -595,13 +605,44 @@ export default function PoolDetailsPage() {
         signer
       );
       const tx = await contract.transferOwnership(newOwnerAddress, { gasLimit: 200000 });
+      console.log("Transfer ownership tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Ownership transferred successfully!");
+      toast.success(`Ownership transferred successfully! Tx: ${tx.hash}`);
       setNewOwnerAddress("");
     } catch (error) {
       console.error("Error transferring ownership:", error);
       let message = error.reason || error.message || "Failed to transfer ownership";
+      toast.error(`Error: ${message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
+  async function exitContriboost() {
+    if (!(await ensureCorrectNetwork())) return;
+    if (!userStatus?.isParticipant) {
+      toast.warning("You are not a participant in this pool");
+      return;
+    }
+    if (poolDetails.status !== "not-started") {
+      toast.warning("You can only exit before the pool starts");
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      const contract = new ethers.Contract(contractAddress, ContriboostAbi, signer);
+      const tx = await contract.exitContriboost({ gasLimit: 200000 });
+      console.log("Exit Contriboost tx hash:", tx.hash);
+      await tx.wait();
+      await fetchPoolDetails();
+      toast.success(`Successfully exited the Contriboost pool! Tx: ${tx.hash}`);
+    } catch (error) {
+      console.error("Error exiting Contriboost:", error);
+      let message = error.reason || error.message || "Failed to exit";
+      if (error.code === "CALL_EXCEPTION") {
+        message = "Contract call failed: Check pool status or participant status";
+      }
       toast.error(`Error: ${message}`);
     } finally {
       setIsProcessing(false);
@@ -654,14 +695,16 @@ export default function PoolDetailsPage() {
           const approveTx = await tokenContract.approve(contractAddress, amount, {
             gasLimit: 100000,
           });
+          console.log("Approve tx hash:", approveTx.hash);
           await approveTx.wait();
         }
         tx = await contract.contribute(amount, { gasLimit: 300000 });
       }
 
+      console.log("Contribute GoalFund tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Contribution successful!");
+      toast.success(`Contribution successful! Tx: ${tx.hash}`);
       setContributeAmount("");
     } catch (error) {
       console.error("Error contributing to GoalFund:", error);
@@ -691,9 +734,10 @@ export default function PoolDetailsPage() {
     try {
       const contract = new ethers.Contract(contractAddress, GoalFundAbi, signer);
       const tx = await contract.withdrawFunds({ gasLimit: 300000 });
+      console.log("Withdraw GoalFund tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Funds withdrawn successfully!");
+      toast.success(`Funds withdrawn successfully! Tx: ${tx.hash}`);
     } catch (error) {
       console.error("Error withdrawing funds:", error);
       let message = error.reason || error.message || "Failed to withdraw funds";
@@ -716,9 +760,10 @@ export default function PoolDetailsPage() {
     try {
       const contract = new ethers.Contract(contractAddress, GoalFundAbi, signer);
       const tx = await contract.refundContributors({ gasLimit: 500000 });
+      console.log("Refund contributors tx hash:", tx.hash);
       await tx.wait();
       await fetchPoolDetails();
-      toast.success("Refunds issued successfully!");
+      toast.success(`Refunds issued successfully! Tx: ${tx.hash}`);
     } catch (error) {
       console.error("Error issuing refunds:", error);
       let message = error.reason || error.message || "Failed to issue refunds";
@@ -975,6 +1020,19 @@ export default function PoolDetailsPage() {
             </Button>
           </div>
         )}
+        {isContriboost && userStatus?.isParticipant && poolDetails.status === "not-started" && (
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={isCorrectNetwork ? exitContriboost : () => switchNetwork(NETWORKS[network].chainId)}
+              disabled={isProcessing || isConnecting}
+              className="min-w-[120px]"
+              variant="destructive"
+            >
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              {isCorrectNetwork ? "Exit Pool" : `Switch to ${NETWORKS[network].name}`}
+            </Button>
+          </div>
+        )}
         {canContributeGoalFund && (
           <div className="flex flex-wrap gap-2 items-end">
             <div className="space-y-2">
@@ -1022,7 +1080,7 @@ export default function PoolDetailsPage() {
           {showDistributeContriboost && (
             <Button
               onClick={isCorrectNetwork ? distributeContriboostFunds : () => switchNetwork(NETWORKS[network].chainId)}
-              
+              disabled={isProcessing || isConnecting || !userStatus?.isHost}
               className="min-w-[120px]"
               title={!userStatus?.isHost ? "Only the pool host can distribute funds" : undefined}
             >
@@ -1142,22 +1200,23 @@ export default function PoolDetailsPage() {
         )}
       </div>
 
-      {isContriboost && (
+      {isContriboost && participants.length > 0 && (
         <Card className="mb-8">
           <CardHeader>
             <CardTitle>Participants</CardTitle>
-            <CardDescription>List of all participants and their status</CardDescription>
+            <CardDescription>
+              List of all participants in this Contriboost pool
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Address</TableHead>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Deposit Amount</TableHead>
-                  <TableHead>Last Deposit</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Deposit Amount</TableHead>
                   <TableHead>Missed Deposits</TableHead>
+                  <TableHead>Last Deposit</TableHead>
                   {userStatus?.isHost && <TableHead>Actions</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -1165,36 +1224,33 @@ export default function PoolDetailsPage() {
                 {participants.map((participant) => (
                   <TableRow key={participant.address}>
                     <TableCell>{formatAddress(participant.address)}</TableCell>
-                    <TableCell>{participant.id}</TableCell>
-                    <TableCell>{participant.depositAmount} {poolDetails.tokenSymbol}</TableCell>
                     <TableCell>
-                      {participant.lastDepositTime
+                      {participant.receivedFunds
+                        ? "Received Funds"
+                        : participant.active
+                        ? "Active"
+                        : "Inactive"}
+                    </TableCell>
+                    <TableCell>
+                      {parseFloat(participant.depositAmount).toFixed(4)} {poolDetails.tokenSymbol}
+                    </TableCell>
+                    <TableCell>{participant.missedDeposits}</TableCell>
+                    <TableCell>
+                      {participant.lastDepositTime > 0
                         ? formatDate(participant.lastDepositTime)
                         : "N/A"}
                     </TableCell>
-                    <TableCell>
-                      {participant.active ? "Active" : "Inactive"}
-                      {participant.receivedFunds && " (Received Funds)"}
-                    </TableCell>
-                    <TableCell>{participant.missedDeposits}</TableCell>
                     {userStatus?.isHost && (
                       <TableCell>
                         {!participant.active &&
-                          participant.missedDeposits < poolDetails.maxMissedDeposits && (
+                          !participant.receivedFunds &&
+                          participant.missedDeposits > 0 && (
                             <Button
-                              variant="outline"
                               size="sm"
-                              onClick={
-                                isCorrectNetwork
-                                  ? () => reactivateContriboost(participant.address)
-                                  : () => switchNetwork(NETWORKS[network].chainId)
-                              }
+                              onClick={() => reactivateContriboost(participant.address)}
                               disabled={isProcessing}
                             >
-                              {isProcessing ? (
-                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                              ) : null}
-                              {isCorrectNetwork ? "Reactivate" : `Switch to ${NETWORKS[network].name}`}
+                              Reactivate
                             </Button>
                           )}
                       </TableCell>
